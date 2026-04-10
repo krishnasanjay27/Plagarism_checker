@@ -14,6 +14,9 @@ const initialState = {
   processed:       null,   // {filename: {tokens, token_count, original_snippet}}
   heatmap:         null,   // base64 PNG string
   network:         null,   // base64 PNG string
+  vectors:         null,   // {terms: [], vectors: {doc: [weights]}, total_features, shown_features}
+  topTerms:        null,   // {filename: [[term, weight], ...]}
+  vectorSpace:     null,   // base64 PNG string (PCA projection)
   error:           null,
 };
 
@@ -58,6 +61,12 @@ function reducer(state, action) {
       return { ...state, heatmap: action.payload };
     case "SET_NETWORK":
       return { ...state, network: action.payload };
+    case "SET_VECTORS":
+      return { ...state, vectors: action.payload };
+    case "SET_TOP_TERMS":
+      return { ...state, topTerms: action.payload };
+    case "SET_VECTOR_SPACE":
+      return { ...state, vectorSpace: action.payload };
     case "SET_ERROR":
       return { ...state, error: action.payload, isAnalyzing: false, isUploading: false };
     case "RESET_ANALYSIS":
@@ -65,6 +74,7 @@ function reducer(state, action) {
         ...state,
         results: null, explanations: null, sentences: null,
         processed: null, heatmap: null, network: null,
+        vectors: null, topTerms: null, vectorSpace: null,
         pipelineSteps: [], error: null,
       };
     default:

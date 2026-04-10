@@ -2,52 +2,118 @@
 TF-IDF Vectorization and Cosine Similarity
 ===========================================
 This module converts preprocessed document text into TF-IDF feature vectors
-and computes pairwise cosine similarity—the mathematical core of Mini Dolos.
+and computes pairwise cosine similarity — the mathematical core of Mini Dolos.
 
-TF-IDF Explanation (Term Frequency – Inverse Document Frequency)
------------------------------------------------------------------
-For a term t in document d within corpus D of N documents:
+═══════════════════════════════════════════════════════════════════════════════
+PART 1 — How TF-IDF Represents Documents as Numeric Vectors
+═══════════════════════════════════════════════════════════════════════════════
 
-    TF(t, d)  = count(t in d) / total_terms(d)
-    IDF(t)    = log( N / df(t) )     where df(t) = documents containing t
+Each document is converted into a numeric vector in a high-dimensional space.
+Each dimension of this space corresponds to one vocabulary term (or n-gram
+phrase) from the entire corpus.
+
+For a term t in document d within corpus D (N total documents):
+
+    TF(t, d)     = count(t in d) / total_terms(d)
+                   Proportion of the document occupied by this term.
+
+    IDF(t)       = log( (N + 1) / (df(t) + 1) ) + 1     [smooth variant]
+                   Inverse frequency across documents. Terms used in every
+                   document get a low IDF (they are uninformative). Terms
+                   used in only one document get a high IDF (distinctive).
+
     TF-IDF(t, d) = TF(t, d) × IDF(t)
+                   Combined weight. High weight = this term is both frequent
+                   in this document AND rare across the corpus.
 
-Effect:
-  - Terms frequent in one doc but rare across others → high weight
-  - Terms appearing in every document (like "the") → IDF ≈ 0 → near-zero weight
+After computing raw TF-IDF weights, sklearn L2-normalises each document
+vector so that ||v|| = 1. This makes the vectors direction-only, removing
+the effect of document length.
 
-Why TF-IDF outperforms raw term counts for plagiarism detection:
-  Raw counts give equal importance to high-frequency generic words and rare
-  distinctive terms. TF-IDF suppresses ubiquitous words and amplifies the
-  weight of distinctive, domain-specific vocabulary, making it far more
-  sensitive to the kind of copied or paraphrased content that constitutes
-  academic plagiarism.
+Final vector space:
+  - Each document d → a vector vd ∈ ℝ^V   (V = vocabulary size)
+  - vd[i] = TF-IDF weight of feature i in document d (after L2 norm)
+  - Most entries are 0 (sparse: most terms appear in only some documents)
 
-Why n-grams (1, 2) improve phrase detection:
-  - Unigrams (n=1) — capture individual word matches
-      e.g., "machine", "learning", "neural", "dataset"
-  - Bigrams (n=2)  — capture sequential phrase matches
-      e.g., "machine_learning", "neural_network", "training_dataset"
-  Together, (1,2) n-grams detect both word-level and phrase-level copying,
-  essential for identifying partial paraphrasing where sentences are
-  restructured but key phrases are preserved verbatim.
+Why TF-IDF outperforms raw counts for plagiarism detection:
+  Raw counts give equal importance to common words ("the", "is", "and") and
+  domain-specific terms ("neural network", "gradient descent"). TF-IDF
+  suppresses common vocabulary via the IDF factor and amplifies distinctive
+  vocabulary. A plagiarist who copies the phrase "cosine similarity score" will
+  have that phrase flagged because it is rare across the corpus but prominent
+  in both the original and copied document.
 
-Cosine Similarity
------------------
-Measures the cosine of the angle θ between two TF-IDF vectors A and B:
+sublinear_tf=True in this implementation:
+  Replaces TF with log(1 + TF) to dampen the effect of extremely frequent
+  terms. Without this, one very repeated word would dominate the vector.
 
-    cos(θ) = (A · B) / (|A| × |B|)
+═══════════════════════════════════════════════════════════════════════════════
+PART 2 — Why n-grams (1, 2) Improve Vector Representation Quality
+═══════════════════════════════════════════════════════════════════════════════
 
-  Where:
-    A · B  = Σ(Aᵢ × Bᵢ)   — dot product (sum of element-wise products)
-    |A|    = √Σ(Aᵢ²)       — L2 norm (Euclidean length) of vector A
+ngram_range=(1, 2) means features include both unigrams and bigrams:
 
-Range: [0.0, 1.0]
-  1.0 → vectors point in identical direction → identical vocabulary distribution
-  0.0 → vectors are orthogonal → no shared vocabulary
+  Unigrams (n=1):   each individual word is a separate dimension.
+    Examples: "machine", "learning", "network", "similarity"
 
-Advantage: Length-normalized — a 3-page document does not automatically score
-higher than a 1-page document simply because it contains more terms.
+  Bigrams (n=2):    each consecutive word-pair is a separate dimension.
+    Examples: "machine learning", "neural network", "cosine similarity"
+
+Why bigrams matter for plagiarism:
+  Consider these two sentences:
+    Original:   "machine learning algorithms classify patterns"
+    Paraphrase: "learning algorithms classify machine patterns"
+  - Unigrams: IDENTICAL (same words, different order) → false positive
+  - Bigrams:  DIFFERENT ("machine learning" vs "learning algorithms")
+              Bigrams capture phrase structure and word order.
+
+  Conversely, when phrases ARE copied verbatim:
+    Original:   "gradient descent optimizes the loss function"
+    Plagiarised: "gradient descent was used to optimize the loss function"
+  - Bigrams "gradient descent" and "loss function" are shared.
+    These become high-weight shared features, correctly raising similarity.
+
+Vocabulary explosion is manageable:
+  With (1,2) n-grams, vocabulary grows significantly but is still sparse.
+  min_df=1 ensures every feature is included (appropriate for small academic
+  corpora of 2-20 assignments).
+
+═══════════════════════════════════════════════════════════════════════════════
+PART 3 — How Cosine Similarity Compares Document Vectors
+═══════════════════════════════════════════════════════════════════════════════
+
+After L2 normalisation, ||vA|| = ||vB|| = 1, so:
+
+    cos(θ) = (vA · vB) / (||vA|| × ||vB||)
+           = vA · vB                              (since norms are both 1)
+           = Σᵢ (vA[i] × vB[i])
+
+Geometric interpretation:
+  - cos(θ) measures the ANGLE between two document vectors, not their
+    Euclidean distance. Two vectors pointing in the same direction → θ=0°
+    → cos(0°)=1.0 (identical content distribution).
+  - Two documents discussing completely different topics → nearly orthogonal
+    vectors → θ ≈ 90° → cos(90°) ≈ 0.0.
+
+Why we use cosine and not Euclidean distance:
+  Euclidean distance ||vA - vB|| is affected by document length. A long
+  document has many non-zero weights, making it "far" from a short document
+  even if they discuss the same topic. Cosine similarity is length-invariant
+  because we measure angle, not magnitude difference. This makes it the
+  standard metric for document similarity in information retrieval.
+
+Threshold interpretation:
+  cos(θ) > 0.75  → documents share ~75% of weighted vocabulary direction
+                   → suspicious: likely involves copied or closely paraphrased content
+  cos(θ) > 0.90  → very high : almost certainly copied with minor edits
+  cos(θ) > 0.50  → moderate  : topic overlap, some shared vocabulary
+  cos(θ) < 0.30  → low       : different topics, negligible overlap
+
+PCA projection (see visualization.py):
+  Since vectors live in ℝ^V (thousands of dimensions), we use PCA to project
+  to ℝ² for visualisation. Direction in ℝ² approximates direction in ℝ^V —
+  documents close together in the 2D scatter plot will have high cosine
+  similarity, and documents far apart will have low cosine similarity.
 """
 
 import numpy as np

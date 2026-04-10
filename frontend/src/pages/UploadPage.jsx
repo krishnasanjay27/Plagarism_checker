@@ -11,6 +11,9 @@ import {
   getSentences,
   getProcessed,
   getExplanations,
+  getVectors,
+  getTopTerms,
+  getVectorSpace,
 } from "../services/api";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -97,13 +100,16 @@ export default function UploadPage() {
 
       // Step 4 — Visualizations & fetch all results
       markActive(4);
-      const [resR, heatR, netR, sentR, procR, expR] = await Promise.all([
+      const [resR, heatR, netR, sentR, procR, expR, vecR, topR, vsR] = await Promise.all([
         getResults(),
         getHeatmap(),
         getNetwork(),
         getSentences().catch(() => ({ data: { matches: {} } })),
         getProcessed(),
         getExplanations().catch(() => ({ data: {} })),
+        getVectors().catch(() => ({ data: { terms: [], vectors: {}, total_features: 0, shown_features: 0 } })),
+        getTopTerms().catch(() => ({ data: {} })),
+        getVectorSpace().catch(() => ({ data: { image: null } })),
       ]);
 
       dispatch({ type: "SET_RESULTS",      payload: resR.data });
@@ -112,6 +118,9 @@ export default function UploadPage() {
       dispatch({ type: "SET_SENTENCES",    payload: sentR.data.matches });
       dispatch({ type: "SET_PROCESSED",    payload: procR.data });
       dispatch({ type: "SET_EXPLANATIONS", payload: expR.data });
+      dispatch({ type: "SET_VECTORS",      payload: vecR.data });
+      dispatch({ type: "SET_TOP_TERMS",    payload: topR.data });
+      dispatch({ type: "SET_VECTOR_SPACE", payload: vsR.data.image });
       markDone(4);
 
       dispatch({ type: "SET_ANALYZING", payload: false });

@@ -36,5 +36,18 @@ export const getProcessed = () => api.get("/processed");
 /** Fetch shared n-gram explanations per suspicious pair */
 export const getExplanations = () => api.get("/explanations");
 
+/** Fetch TF-IDF feature matrix (top-N terms × documents) */
+export const getVectors = (topN = 40) => api.get(`/vectors?top_n=${topN}`);
+
+/** Fetch top-10 TF-IDF weighted terms per document */
+export const getTopTerms = () => api.get("/top-terms");
+
+/** Fetch PCA 2D projection of TF-IDF vectors as base64 PNG */
+export const getVectorSpace = () => api.get("/vector-space");
+
+/** Fetch clustered network graph with community detection as base64 PNG */
+export const getClusteredNetwork = (threshold = 0.75, hideSingletons = false) =>
+  api.get(`/network-clustered?threshold=${threshold}&hide_singletons=${hideSingletons}`);
+
 /** Health check */
 export const healthCheck = () => api.get("/health");

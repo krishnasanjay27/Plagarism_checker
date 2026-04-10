@@ -17,13 +17,18 @@ API Endpoints
   GET  /results       — Return similarity matrix + suspicious pairs
   GET  /heatmap       — Return heatmap PNG as base64
   GET  /network       — Return network graph PNG as base64
+  GET  /network-clustered — Return clustered network graph PNG as base64
   GET  /sentences     — Return sentence-level matching results
   GET  /processed     — Return preprocessed token preview per document
   GET  /explanations  — Return shared n-gram explanations per suspicious pair
+  GET  /vectors       — Return top-N TF-IDF feature matrix (terms × documents)
+  GET  /top-terms     — Return top-10 TF-IDF terms per document
+  GET  /vector-space  — Return PCA 2D projection of TF-IDF vectors (base64 PNG)
   GET  /health        — Health check endpoint
 """
 
 import os
+import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
@@ -31,7 +36,7 @@ from werkzeug.utils import secure_filename
 from preprocessing import preprocess_all
 from similarity import compute_similarity, get_shared_ngrams
 from sentence_matching import match_sentences
-from visualization import generate_heatmap, generate_network
+from visualization import generate_heatmap, generate_network, generate_pca_plot, generate_clustered_network
 from utils import get_file_metadata, get_text_snippet
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -356,6 +361,199 @@ def get_explanations():
     if not state["explanations"]:
         return jsonify({"error": "No explanations. Run POST /analyze first."}), 404
     return jsonify(state["explanations"])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /vectors
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route("/vectors", methods=["GET"])
+def get_vectors():
+    """
+    Return the TF-IDF feature matrix limited to the top-N most weighted terms.
+
+    Documents are represented as high-dimensional sparse vectors in TF-IDF space.
+    Returning the full vocabulary (often thousands of features) would produce an
+    unreadably wide table, so we select the top-N features by their maximum
+    TF-IDF weight across any document — these are the most discriminative terms.
+
+    Query Parameters:
+      top_n (int): Number of terms to return. Default 40. Max 100.
+
+    Returns 200:
+      {
+        "terms":          ["machine learning", "cosine similarity", ...],
+        "vectors":        {"doc1.txt": [0.32, 0.44, ...], ...},
+        "total_features": 1243,
+        "shown_features": 40
+      }
+    Returns 404: {error}
+    """
+    if state["results"] is None:
+        return jsonify({"error": "No results. Run POST /analyze first."}), 404
+
+    vectorizer   = state["results"]["vectorizer"]
+    tfidf_matrix = state["results"]["tfidf_matrix"]
+    documents    = state["results"]["documents"]
+
+    try:
+        top_n = int(request.args.get("top_n", 40))
+        top_n = max(5, min(100, top_n))
+    except (ValueError, TypeError):
+        top_n = 40
+
+    feature_names = vectorizer.get_feature_names_out()
+    dense         = tfidf_matrix.toarray()
+
+    # Select top_n terms by maximum weight across all documents
+    # These are the terms most responsible for differentiating documents.
+    max_weights = dense.max(axis=0)          # shape: (n_features,)
+    top_indices = np.argsort(max_weights)[::-1][:top_n]
+
+    top_terms = [feature_names[i] for i in top_indices]
+    vectors   = {
+        doc: [round(float(dense[j][i]), 4) for i in top_indices]
+        for j, doc in enumerate(documents)
+    }
+
+    return jsonify({
+        "terms":          top_terms,
+        "vectors":        vectors,
+        "total_features": int(len(feature_names)),
+        "shown_features": top_n,
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /top-terms
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route("/top-terms", methods=["GET"])
+def get_top_terms():
+    """
+    Return the top-10 TF-IDF weighted terms per document.
+
+    High-weight terms are the vocabulary items most characteristic of each
+    document. Comparing these lists across documents explains why two documents
+    score high on cosine similarity — they share the same high-weight vocabulary.
+
+    Query Parameters:
+      top_n (int): Terms per document. Default 10. Max 20.
+
+    Returns 200:
+      {
+        "doc1.txt": [["machine learning", 0.44], ["neural network", 0.38], ...],
+        ...
+      }
+    Returns 404: {error}
+    """
+    if state["results"] is None:
+        return jsonify({"error": "No results. Run POST /analyze first."}), 404
+
+    vectorizer   = state["results"]["vectorizer"]
+    tfidf_matrix = state["results"]["tfidf_matrix"]
+    documents    = state["results"]["documents"]
+
+    try:
+        top_n = int(request.args.get("top_n", 10))
+        top_n = max(5, min(20, top_n))
+    except (ValueError, TypeError):
+        top_n = 10
+
+    feature_names = vectorizer.get_feature_names_out()
+    dense         = tfidf_matrix.toarray()
+
+    top_terms = {}
+    for j, doc in enumerate(documents):
+        weights     = dense[j]
+        top_indices = np.argsort(weights)[::-1][:top_n]
+        top_terms[doc] = [
+            [feature_names[i], round(float(weights[i]), 4)]
+            for i in top_indices
+            if weights[i] > 0.0       # Skip zero-weight features
+        ]
+
+    return jsonify(top_terms)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /vector-space
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route("/vector-space", methods=["GET"])
+def get_vector_space():
+    """
+    Return a PCA 2D projection of TF-IDF document vectors as a base64 PNG.
+
+    TF-IDF vectors live in a high-dimensional space (one axis per vocabulary
+    term). PCA reduces this to 2 principal components that capture the most
+    variance, allowing documents to be plotted in a 2D scatter plot.
+
+    Documents that are close together in this plot share similar TF-IDF
+    distributions — i.e., they discuss similar topics in similar proportions.
+    This directly explains why they receive high cosine similarity scores.
+
+    Returns 200: {image: '<base64 PNG string>'}
+    Returns 404: {error}
+    Returns 500: {error, details}
+    """
+    if state["results"] is None:
+        return jsonify({"error": "No results. Run POST /analyze first."}), 404
+
+    try:
+        image = generate_pca_plot(
+            state["results"]["documents"],
+            state["results"]["tfidf_matrix"],
+            state["results"]["suspicious_pairs"],
+        )
+    except Exception as e:
+        return jsonify({"error": "PCA plot generation failed.", "details": str(e)}), 500
+
+    return jsonify({"image": image})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /network-clustered
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route("/network-clustered", methods=["GET"])
+def get_network_clustered():
+    """
+    Return a color-coded clustered document similarity network graph as a base64 PNG.
+
+    Query Parameters:
+      threshold (float): Only edges > threshold are shown. Default 0.75.
+      hide_singletons (bool): If true, remove isolated nodes. Default false.
+
+    Returns 200: {image: '<base64 PNG string>'}
+    Returns 404: {error}
+    Returns 500: {error, details}
+    """
+    if state["results"] is None:
+        return jsonify({"error": "No results. Run POST /analyze first."}), 404
+
+    try:
+        threshold = float(request.args.get("threshold", 0.75))
+    except ValueError:
+        threshold = 0.75
+
+    hide_singletons_str = request.args.get("hide_singletons", "false").lower()
+    hide_singletons = hide_singletons_str == "true"
+
+    try:
+        # Use the sparse tfidf_matrix internally through score checking instead of passing matrix
+        # Let's pass the matrix from the state results.
+        matrix = state["results"]["matrix"]
+        image = generate_clustered_network(
+            state["results"]["documents"],
+            matrix,
+            threshold=threshold,
+            hide_singletons=hide_singletons,
+        )
+    except Exception as e:
+        return jsonify({"error": "Clustered Network graph generation failed.", "details": str(e)}), 500
+
+    return jsonify({"image": image})
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -9,6 +9,8 @@ import {
   getSentences,
   getProcessed,
   getExplanations,
+  getVectors,
+  getTopTerms,
 } from "../services/api";
 
 // ── Cell coloring ─────────────────────────────────────────────────────────────
@@ -354,8 +356,129 @@ const TABS = [
   { id: "ranking",    label: "Similarity Ranking" },
   { id: "sentences",  label: "Sentence Matches" },
   { id: "phrases",    label: "Shared Phrases" },
+  { id: "vectors",    label: "Vector Analysis" },
   { id: "preprocess", label: "Preprocessing Preview" },
 ];
+
+// ── Top TF-IDF Terms per Document ─────────────────────────────────────────────
+function TopTermsSection({ topTerms }) {
+  if (!topTerms) return <div className="empty-state">Run analysis to see top terms.</div>;
+  const docs = Object.keys(topTerms);
+  if (docs.length === 0) return <div className="empty-state">No terms available.</div>;
+
+  const maxWeight = Math.max(
+    ...docs.flatMap((d) => topTerms[d].map(([, w]) => w))
+  );
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
+      {docs.map((doc) => (
+        <div key={doc} className="panel" style={{ margin: 0 }}>
+          <div className="panel-header">
+            <h3 style={{ fontSize: 11, fontFamily: "Courier New, monospace", textTransform: "none" }}>
+              {doc}
+            </h3>
+          </div>
+          <div className="panel-body" style={{ padding: "8px 12px" }}>
+            {topTerms[doc].map(([term, weight], i) => (
+              <div key={term} style={{ marginBottom: 7 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+                  <span style={{ fontSize: 12, color: "var(--text)", fontFamily: "Courier New, monospace" }}>
+                    {i + 1}. {term}
+                  </span>
+                  <span style={{ fontSize: 11, color: "var(--text-secondary)", fontWeight: 600 }}>
+                    {weight.toFixed(4)}
+                  </span>
+                </div>
+                <div className="score-bar-bg">
+                  <div
+                    className="score-bar-fill"
+                    style={{ width: `${(weight / maxWeight) * 100}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── TF-IDF Feature Matrix Table ───────────────────────────────────────────────
+function VectorTable({ vectors }) {
+  if (!vectors || !vectors.terms || vectors.terms.length === 0) {
+    return <div className="empty-state">Run analysis to see feature matrix.</div>;
+  }
+
+  const { terms, vectors: docVectors, total_features, shown_features } = vectors;
+  const docs = Object.keys(docVectors);
+  const shortName = (n) => n.replace(".txt", "");
+
+  // Find max weight per term row (for relative shading)
+  const rowMax = terms.map((_, ti) =>
+    Math.max(...docs.map((d) => docVectors[d][ti]))
+  );
+
+  const cellBg = (val, max) => {
+    if (max === 0 || val === 0) return "";
+    const intensity = Math.round((val / max) * 20);   // 0-20% opacity of accent
+    return `rgba(6, 95, 70, ${intensity / 100})`;
+  };
+
+  return (
+    <div>
+      <p style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10 }}>
+        Showing top <strong>{shown_features}</strong> terms by maximum TF-IDF weight
+        (out of <strong>{total_features}</strong> total vocabulary features).
+        Darker cells indicate higher TF-IDF weight for that term in that document.
+      </p>
+      <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 4 }}>
+        <table className="matrix-table" style={{ fontSize: 11, minWidth: 500 }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left", minWidth: 160, position: "sticky", left: 0,
+                           background: "var(--bg-subtle)", zIndex: 1 }}>
+                Term / Feature
+              </th>
+              {docs.map((d) => (
+                <th key={d}>{shortName(d)}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {terms.map((term, ti) => (
+              <tr key={term}>
+                <td style={{
+                  textAlign: "left",
+                  fontFamily: "Courier New, monospace",
+                  fontSize: 11,
+                  background: "var(--bg-subtle)",
+                  position: "sticky",
+                  left: 0,
+                  borderRight: "1px solid var(--border)",
+                }}>
+                  {term}
+                </td>
+                {docs.map((d) => {
+                  const val = docVectors[d][ti];
+                  return (
+                    <td key={d} style={{
+                      background: val > 0 ? cellBg(val, rowMax[ti]) : "",
+                      color: val > 0 ? "var(--text)" : "var(--text-muted)",
+                    }}>
+                      {val > 0 ? val.toFixed(4) : "—"}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 export default function ResultsPage() {
   const { state, dispatch } = useAnalysis();
@@ -363,20 +486,22 @@ export default function ResultsPage() {
   const [activeTab, setActiveTab] = useState("matrix");
   const [rerunning, setRerunning] = useState(false);
 
-  const { results, explanations, sentences, processed, threshold } = state;
+  const { results, explanations, sentences, processed, threshold, vectors, topTerms, vectorSpace } = state;
 
   // ── Re-run with new threshold ─────────────────────────────────────────────
   const rerunAnalysis = useCallback(async (newThreshold) => {
     setRerunning(true);
     try {
       await analyzeDocuments(newThreshold);
-      const [resR, heatR, netR, sentR, procR, expR] = await Promise.all([
+      const [resR, heatR, netR, sentR, procR, expR, vecR, topR] = await Promise.all([
         getResults(),
         getHeatmap(),
         getNetwork(),
         getSentences().catch(() => ({ data: { matches: {} } })),
         getProcessed(),
         getExplanations().catch(() => ({ data: {} })),
+        getVectors().catch(() => ({ data: { terms: [], vectors: {} } })),
+        getTopTerms().catch(() => ({ data: {} })),
       ]);
       dispatch({ type: "SET_RESULTS",      payload: resR.data });
       dispatch({ type: "SET_HEATMAP",      payload: heatR.data.image });
@@ -384,6 +509,8 @@ export default function ResultsPage() {
       dispatch({ type: "SET_SENTENCES",    payload: sentR.data.matches });
       dispatch({ type: "SET_PROCESSED",    payload: procR.data });
       dispatch({ type: "SET_EXPLANATIONS", payload: expR.data });
+      dispatch({ type: "SET_VECTORS",      payload: vecR.data });
+      dispatch({ type: "SET_TOP_TERMS",    payload: topR.data });
     } catch (e) {
       console.error(e);
     }
@@ -545,6 +672,97 @@ export default function ResultsPage() {
             </div>
             <div className="panel-body">
               <SharedPhrasesPanel explanations={explanations} />
+            </div>
+          </div>
+        )}
+
+        {activeTab === "vectors" && (
+          <div>
+            <div className="panel">
+              <div className="panel-header">
+                <h3>Top TF-IDF Weighted Terms per Document</h3>
+                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                  Top 10 terms by TF-IDF weight
+                </span>
+              </div>
+              <div className="panel-body">
+                <p style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 }}>
+                  High TF-IDF weight means the term is both frequent in this document and
+                  rare across the rest of the corpus — making it a distinctive signature
+                  of that document's content.
+                </p>
+                <TopTermsSection topTerms={topTerms} />
+              </div>
+            </div>
+            <div className="panel">
+              <div className="panel-header">
+                <h3>TF-IDF Feature Matrix</h3>
+                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                  Top-40 discriminative vocabulary features
+                </span>
+              </div>
+              <div className="panel-body">
+                <VectorTable vectors={vectors} />
+            </div>
+            </div>
+
+            {/* ── PCA Projection Panel ─────────────────────────────────────────── */}
+            <div className="panel">
+              <div className="panel-header">
+                <h3>Document Vector Space Projection</h3>
+                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                  sklearn PCA &middot; 2D dimensionality reduction
+                </span>
+              </div>
+              <div className="panel-body">
+                <p style={{
+                  fontSize: 12,
+                  color: "var(--text-secondary)",
+                  marginBottom: 6,
+                  fontWeight: 600,
+                  letterSpacing: "0.01em",
+                }}>
+                  2D Projection of TF-IDF Document Vectors using PCA
+                </p>
+                <p style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 14 }}>
+                  Each document is represented as a high-dimensional TF-IDF vector in
+                  vocabulary space. Principal Component Analysis (PCA) projects these
+                  vectors onto the two axes of maximum variance, producing this 2D
+                  scatter plot. Documents plotted closer together share similar
+                  term-weight distributions and will receive higher cosine similarity
+                  scores. Red nodes and dashed connecting lines mark suspicious pairs
+                  above the detection threshold.
+                </p>
+                {vectorSpace ? (
+                  <img
+                    src={`data:image/png;base64,${vectorSpace}`}
+                    alt="2D Projection of TF-IDF Document Vectors using PCA"
+                    className="viz-image"
+                  />
+                ) : (
+                  <div className="empty-state">
+                    <div style={{ fontSize: 20, marginBottom: 8 }}>&#9632;</div>
+                    <div>PCA projection not available. Re-run analysis to generate it.</div>
+                  </div>
+                )}
+                <div style={{
+                  marginTop: 12,
+                  padding: "8px 12px",
+                  background: "var(--bg-subtle)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 3,
+                  fontSize: 11,
+                  color: "var(--text-secondary)",
+                  lineHeight: 1.7,
+                }}>
+                  <strong style={{ color: "var(--text)" }}>How to read this plot:</strong>
+                  {" "}Documents whose TF-IDF vectors point in the same direction in
+                  high-dimensional space will cluster together here. The dashed lines
+                  between nodes show pairs flagged above the {(threshold * 100).toFixed(0)}%
+                  similarity threshold. The percentage labels on the axes show how much
+                  variance each principal component captures.
+                </div>
+              </div>
             </div>
           </div>
         )}
