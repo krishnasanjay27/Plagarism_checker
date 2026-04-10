@@ -1,0 +1,19 @@
+Database management systems are software applications that enable users to store, organize, retrieve, and manipulate structured data efficiently. A relational database management system (RDBMS) organizes data into tables consisting of rows and columns, with relationships defined between tables using primary and foreign keys. SQL (Structured Query Language) is the standard language for interacting with relational databases.
+
+The relational model, proposed by Edgar F. Codd in 1970, provides a mathematical foundation for database design based on set theory and first-order predicate logic. Normalization is the process of organizing database tables to minimize data redundancy and eliminate undesirable insertion, update, and deletion anomalies. The normal forms—First Normal Form (1NF), Second Normal Form (2NF), and Third Normal Form (3NF)—define progressively stricter constraints on table structure.
+
+Transaction management is a fundamental concept in database systems. A transaction is a sequence of database operations that must be executed as a single unit. The ACID properties—Atomicity, Consistency, Isolation, and Durability—define the guarantees that a database system provides for transaction processing. Atomicity ensures that all operations in a transaction either complete successfully or are entirely rolled back.
+
+Indexing is a critical technique for improving query performance in database systems. A database index is a data structure that allows the database engine to locate rows matching specific criteria without scanning the entire table. B-tree indexes are the most commonly used index structure in relational databases, supporting efficient equality and range queries.
+
+NoSQL databases emerged as alternatives to relational databases for handling large-scale unstructured or semi-structured data. Document stores, key-value stores, column-family stores, and graph databases represent the major categories of NoSQL systems. MongoDB is a popular document store that stores data as JSON-like documents, providing flexible schema design.
+
+Query optimization is the process by which a database engine selects the most efficient execution plan for a given SQL query. The query optimizer analyzes available indexes, table statistics, and join strategies to generate an optimal execution plan. Cost-based optimizers estimate the computational cost of different execution strategies and select the cheapest plan.
+
+Concurrency control mechanisms ensure that multiple transactions can execute simultaneously without interfering with each other. Two-phase locking (2PL) and multiversion concurrency control (MVCC) are the primary approaches used in modern database systems. MVCC allows readers to access consistent snapshots of data without blocking writers.
+
+Database backup and recovery procedures protect data against hardware failures, software bugs, and human errors. Write-ahead logging (WAL) is a technique where changes are first written to a log file before being applied to the actual data files. This allows the database to recover to a consistent state after a system failure by replaying or undoing operations recorded in the log.
+
+Distributed databases span multiple physical machines, enabling horizontal scalability and fault tolerance. The CAP theorem states that a distributed system cannot simultaneously guarantee consistency, availability, and partition tolerance. Different distributed database systems make different trade-offs depending on their target use case.
+
+In conclusion, database management systems provide essential infrastructure for modern software applications. Understanding database design principles, query optimization, transaction management, and distributed systems concepts is fundamental for building scalable, reliable data-driven applications in enterprise environments.
